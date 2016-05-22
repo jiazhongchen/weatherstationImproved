@@ -22,7 +22,7 @@ SOFTWARE.
 
 See more at http://blog.squix.ch
 */
-
+#include "DHT.h"
 #include <ESP8266WiFi.h>
 #include <Ticker.h>
 #include <JsonListener.h>
@@ -30,17 +30,28 @@ See more at http://blog.squix.ch
 #include "SSD1306Ui.h"
 #include "Wire.h"
 #include "WundergroundClient.h"
-#include "WeatherStationFonts.h";
-#include "WeatherStationImages.h";
+#include "WeatherStationFonts.h"
+#include "WeatherStationImages.h"
 #include "TimeClient.h"
 #include "ThingspeakClient.h"
+
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+#define DHTPIN D2     // what digital pin we're connected to
+
 
 /***************************
  * Begin Settings
  **************************/
 // WIFI
-const char* WIFI_SSID = "yourssid"; 
-const char* WIFI_PWD = "yourpassw0rd";
+//const char* WIFI_SSID = "tsWIFI"; 
+//const char* WIFI_PWD = "ginger4ever";
+//const char* WIFI_SSID = "TPPWF_0C1C73"; 
+//const char* WIFI_PWD = "873472C255";
+const char* WIFI_SSID = "MHV1"; 
+const char* WIFI_PWD = "solderingiron43";
+
+WiFiClient client;
+
 
 // Setup
 const int UPDATE_INTERVAL_SECS = 10 * 60; // Update every 10 minutes
@@ -51,22 +62,37 @@ const int SDA_PIN = D3;
 const int SDC_PIN = D4;
 
 // TimeClient settings
-const float UTC_OFFSET = 1;
+const float UTC_OFFSET = 10;
 
 // Wunderground Settings
 const boolean IS_METRIC = true;
-const String WUNDERGRROUND_API_KEY = "WUNDERGROUND_API_KEY";
-const String WUNDERGROUND_COUNTRY = "CH";
-const String WUNDERGROUND_CITY = "Zurich";
+const String WUNDERGRROUND_API_KEY = "7b60a244224132e6";
+const String WUNDERGROUND_COUNTRY = "AU";
+const String WUNDERGROUND_CITY = "Canberra";
 
 //Thingspeak Settings
-const String THINGSPEAK_CHANNEL_ID = "67284";
-const String THINGSPEAK_API_READ_KEY = "L2VIW20QVNZJBLAK";
+//const String THINGSPEAK_CHANNEL_ID = "67284";
+//const String THINGSPEAK_API_READ_KEY = "L2VIW20QVNZJBLAK";
+const String THINGSPEAK_CHANNEL_ID = "78467";
+const String THINGSPEAK_API_READ_KEY = "JXQVGII9SAF0LQ62";
+
+bool drawFrame1(SSD1306 *display, SSD1306UiState* state, int x, int y);
+bool drawFrame2(SSD1306 *display, SSD1306UiState* state, int x, int y);
+bool drawFrame3(SSD1306 *display, SSD1306UiState* state, int x, int y);
+bool drawFrame4(SSD1306 *display, SSD1306UiState* state, int x, int y);
+bool drawFrame5(SSD1306 *display, SSD1306UiState* state, int x, int y);
+
+void updateData(SSD1306 *display);
+void setReadyForWeatherUpdate();
+void drawProgress(SSD1306 *display, int percentage, String label);
+void drawForecast(SSD1306 *display, int x, int y, int dayIndex);
+void updateThingSpeak(String);
 
 // Initialize the oled display for address 0x3c
 // sda-pin=14 and sdc-pin=12
 SSD1306   display(I2C_DISPLAY_ADDRESS, SDA_PIN, SDC_PIN);
 SSD1306Ui ui     ( &display );
+DHT dht(DHTPIN, DHTTYPE);
 
 /***************************
  * End Settings
@@ -79,6 +105,18 @@ WundergroundClient wunderground(IS_METRIC);
 
 ThingspeakClient thingspeak;
 
+// Local Network Settings
+byte mac[] = { 0xD4, 0x28, 0xB2, 0xFF, 0xA0, 0xA1 }; // Must be unique on local network
+
+// ThingSpeak Settings
+char thingSpeakAddress[] = "api.thingspeak.com";
+String writeAPIKey = "NKUXAIM5WPOQADPV";
+const int updateThingSpeakInterval = 30 * 1000;      // Time interval in milliseconds to update ThingSpeak (number of seconds * 1000 = interval)
+// Variable Setup
+long lastConnectionTime = 0; 
+boolean lastConnected = false;
+int failedCounter = 0;
+
 // this array keeps function pointers to all frames
 // frames are the single views that slide from right to left
 bool (*frames[])(SSD1306 *display, SSD1306UiState* state, int x, int y) = { drawFrame1, drawFrame2, drawFrame3, drawFrame4, drawFrame5 };
@@ -88,10 +126,13 @@ int numberOfFrames = 5;
 bool readyForWeatherUpdate = false;
 
 String lastUpdate = "--";
+String localTemperature = "";
+String localHumidity = "";
 
 Ticker ticker;
 
 void setup() {
+  
   Serial.begin(115200);
   Serial.println();
   Serial.println();
@@ -101,7 +142,7 @@ void setup() {
   display.clear();
   display.display();
 
-  //display.flipScreenVertically();
+  display.flipScreenVertically();
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setContrast(255);
@@ -140,15 +181,18 @@ void setup() {
 
   // Add frames
   ui.setFrames(frames, numberOfFrames);
-
+  ui.setTimePerFrame(5000); //5 seconds 
   // Inital UI takes care of initalising the display too.
   ui.init();
 
   Serial.println("");
+  dht.begin();
 
   updateData(&display);
 
   ticker.attach(UPDATE_INTERVAL_SECS, setReadyForWeatherUpdate);
+  display.flipScreenVertically();
+  lastConnectionTime = millis();
 
 }
 
@@ -156,20 +200,36 @@ void loop() {
 
   if (readyForWeatherUpdate && ui.getUiState().frameState == FIXED) {
     updateData(&display);
+    Serial.println("update display");   
   }
 
   int remainingTimeBudget = ui.update();
+    
+  if ( millis()-lastConnectionTime>updateThingSpeakInterval ) {
+    Serial.println("upload temperature/humidity to thingspeak");
+    float humidity = dht.readHumidity();  
+    float temperature = dht.readTemperature();
+    String tt(temperature, 2);
+    String hh(humidity, 2);   
+    localTemperature = tt;
+    localHumidity = hh;
+    updateThingSpeak("field1="+localTemperature+"&field2="+localHumidity);  
+  }  
 
-  if (remainingTimeBudget > 0) {
+  //if ( remainingTimeBudget>0 ) {
+
     // You can do some work here
     // Don't do stuff if you are below your
-    // time budget.
-    delay(remainingTimeBudget);
-  }
+    // time budget.    
+    //delay(remainingTimeBudget);
+        // Update ThingSpeak
+  //}
 
 }
 
 void updateData(SSD1306 *display) {
+    
+  display->flipScreenVertically();
   drawProgress(display, 10, "Updating time...");
   timeClient.updateTime();
   drawProgress(display, 30, "Updating conditions...");
@@ -177,7 +237,7 @@ void updateData(SSD1306 *display) {
   drawProgress(display, 50, "Updating forecasts...");
   wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
   drawProgress(display, 80, "Updating thingspeak...");
-  thingspeak.getLastChannelItem(THINGSPEAK_CHANNEL_ID, THINGSPEAK_API_READ_KEY);
+  thingspeak.getLastChannelItem(THINGSPEAK_CHANNEL_ID, THINGSPEAK_API_READ_KEY);  
   lastUpdate = timeClient.getFormattedTime();
   readyForWeatherUpdate = false;
   drawProgress(display, 100, "Done...");
@@ -221,6 +281,7 @@ bool drawFrame2(SSD1306 *display, SSD1306UiState* state, int x, int y) {
   String weatherIcon = wunderground.getTodayIcon();
   int weatherIconWidth = display->getStringWidth(weatherIcon);
   display->drawString(32 + x - weatherIconWidth / 2, 10 + y, weatherIcon);
+  
 }
 
 bool drawFrame3(SSD1306 *display, SSD1306UiState* state, int x, int y) {
@@ -243,12 +304,16 @@ bool drawFrame4(SSD1306 *display, SSD1306UiState* state, int x, int y) {
 }
 
 bool drawFrame5(SSD1306 *display, SSD1306UiState* state, int x, int y) {
+
   display->setTextAlignment(TEXT_ALIGN_CENTER);
   display->setFont(ArialMT_Plain_10);
-  display->drawString(64 + x, 0 + y, "Outdoor");
-  display->setFont(ArialMT_Plain_24);
-  display->drawString(64 + x, 10 + y, thingspeak.getFieldValue(0) + "°C");
-  display->drawString(64 + x, 30 + y, thingspeak.getFieldValue(1) + "%");
+  display->drawString(64 + x, 0 + y, "Indoor"); //outdoor if read from thingspeak
+  display->setFont(ArialMT_Plain_16);
+  //display->drawString(64 + x, 10 + y, thingspeak.getFieldValue(0) + "°C");
+  //display->drawString(64 + x, 30 + y, thingspeak.getFieldValue(1) + "%");
+  display->drawString(64 + x, 10 + y, localTemperature + "°C");
+  display->drawString(64 + x, 30 + y, localHumidity + "%"); 
+  
 }
 
 void drawForecast(SSD1306 *display, int x, int y, int dayIndex) {
@@ -270,6 +335,39 @@ void drawForecast(SSD1306 *display, int x, int y, int dayIndex) {
 void setReadyForWeatherUpdate() {
   Serial.println("Setting readyForUpdate to true");
   readyForWeatherUpdate = true;
+}
+
+void updateThingSpeak(String tsData) {
+  
+    if (client.connect(thingSpeakAddress, 80)) {    
+           
+        client.print("POST /update HTTP/1.1\n");
+        client.print("Host: api.thingspeak.com\n");
+        client.print("Connection: close\n");
+        client.print("X-THINGSPEAKAPIKEY: "+writeAPIKey+"\n");
+        client.print("Content-Type: application/x-www-form-urlencoded\n");
+        client.print("Content-Length: ");
+        client.print(tsData.length());
+        client.print("\n\n");
+
+        client.print(tsData);
+        lastConnectionTime = millis();
+
+        if (client.connected()) {
+            Serial.println("Connecting to ThingSpeak...");
+            Serial.println();
+            failedCounter = 0;
+        } else {
+            failedCounter++;
+            Serial.println("Connection to ThingSpeak failed ("+String(failedCounter, DEC)+")");   
+            Serial.println();
+        }
+    } else {
+        failedCounter++;
+        Serial.println("Connection to ThingSpeak Failed ("+String(failedCounter, DEC)+")");   
+        Serial.println();
+        lastConnectionTime = millis(); 
+    }
 }
 
 
