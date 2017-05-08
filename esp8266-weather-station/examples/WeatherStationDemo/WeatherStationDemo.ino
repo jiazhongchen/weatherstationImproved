@@ -43,12 +43,8 @@ See more at http://blog.squix.ch
  * Begin Settings
  **************************/
 // WIFI
-//const char* WIFI_SSID = "tsWIFI"; 
-//const char* WIFI_PWD = "ginger4ever";
-//const char* WIFI_SSID = "TPPWF_0C1C73"; 
-//const char* WIFI_PWD = "873472C255";
-const char* WIFI_SSID = "MHV1"; 
-const char* WIFI_PWD = "solderingiron43";
+const char* WIFI_SSID = "yourssid`"; 
+const char* WIFI_PWD = "yourpassword";
 
 WiFiClient client;
 
@@ -66,15 +62,13 @@ const float UTC_OFFSET = 10;
 
 // Wunderground Settings
 const boolean IS_METRIC = true;
-const String WUNDERGRROUND_API_KEY = "7b60a244224132e6";
-const String WUNDERGROUND_COUNTRY = "AU";
-const String WUNDERGROUND_CITY = "Canberra";
+const String WUNDERGRROUND_API_KEY = "yourwundergroundapikey";
+const String WUNDERGROUND_COUNTRY = "yourcountry";
+const String WUNDERGROUND_CITY = "yourcity";
 
 //Thingspeak Settings
-//const String THINGSPEAK_CHANNEL_ID = "67284";
-//const String THINGSPEAK_API_READ_KEY = "L2VIW20QVNZJBLAK";
-const String THINGSPEAK_CHANNEL_ID = "78467";
-const String THINGSPEAK_API_READ_KEY = "JXQVGII9SAF0LQ62";
+const String THINGSPEAK_CHANNEL_ID = "yourthingspeakchannelid";
+const String THINGSPEAK_API_READ_KEY = "yourapireadkey";
 
 bool drawFrame1(SSD1306 *display, SSD1306UiState* state, int x, int y);
 bool drawFrame2(SSD1306 *display, SSD1306UiState* state, int x, int y);
@@ -110,7 +104,7 @@ byte mac[] = { 0xD4, 0x28, 0xB2, 0xFF, 0xA0, 0xA1 }; // Must be unique on local 
 
 // ThingSpeak Settings
 char thingSpeakAddress[] = "api.thingspeak.com";
-String writeAPIKey = "NKUXAIM5WPOQADPV";
+String writeAPIKey = "yourapiwritekey";
 const int updateThingSpeakInterval = 30 * 1000;      // Time interval in milliseconds to update ThingSpeak (number of seconds * 1000 = interval)
 // Variable Setup
 long lastConnectionTime = 0; 
